@@ -44,13 +44,16 @@ add_library( # Sets the name of the library.
         jni/jni_basic_type.cpp
         jni/jni_exception.cpp
         jni/jni_string.cpp
-        jni/jni_constructor_class.cpp)
+        jni/jni_constructor_class.cpp
+        jni/jni_bitmap.cpp)
 
 add_library(dynamic-lib
         SHARED
         jni/jni_dynamic_load.cpp
         jni/jni_invoke_method.cpp
-        jni/jni_thread.cpp
+        thread/jni_thread.cpp
+        thread/jni_wait_notify.cpp
+        thread/jni_product_and_consumer.cpp
         jni/jvm.cpp
         )
 
@@ -72,6 +75,10 @@ find_library( # Sets the name of the path variable.
         # you want CMake to locate.
         log)
 
+find_library(
+        jnigraphics-lib
+        jnigraphics)
+
 # Specifies libraries CMake should link to your target library. You
 # can link multiple libraries, such as libraries you define in this
 # build script, prebuilt third-party libraries, or system libraries.
@@ -84,5 +91,9 @@ target_link_libraries(
 
 target_link_libraries(
         native-lib
+#        // jnigraphics这个动态库中存在bitmap相关的操作
+#        ${jnigraphics-lib}
+        jnigraphics
         ${log-lib}
 )
+

@@ -800,8 +800,308 @@ Java_com_jeremy_jndk_jni_JNIException_nativeThrowException(JNIEnv *env, jobject 
 - C++ 11存在一个Thread库，可以进行线程的创建
 - Posix API介绍及线程库
 
+```c++
+#include <base.h>
+// pthread头文件几乎涵盖了线程的所有操作
+#include <pthread.h>
+#include <unistd.h>
+
+void *printThreadHello(void *) {
+    LOGD("hello thread");
+    // 显式让线程退出
+    pthread_exit(0);
+//    return nullptr;
+}
+
+struct ThreadRunArgs {
+    int id;
+    int result;
+};
+
+void *printThreadArgs(void *arg) {
+    ThreadRunArgs *args = static_cast<ThreadRunArgs *>(arg);
+    LOGD("thread id is %d", args->id);
+    LOGD("thread result is %d", args->result);
+    return nullptr;
+}
+
+void *printThreadJoin(void *arg) {
+    ThreadRunArgs *args = static_cast<ThreadRunArgs *>(arg);
+    struct timeval begin;
+    gettimeofday(&begin, nullptr);
+
+    sleep(3);
+
+    struct timeval end;
+    gettimeofday(&end, nullptr);
+
+    LOGD("Time used is %d", end.tv_sec - begin.tv_sec);
+    return reinterpret_cast<void *>(args->result);
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_jeremy_jndk_jni_JNIThread_createNativeThread(JNIEnv *env, jobject thiz) {
+    pthread_t handles;
+    int result = pthread_create(&handles, nullptr, printThreadHello, nullptr);
+    if (result == 0) {
+        LOGD("Create thread success");
+    } else {
+        LOGD("Create thread failed");
+    }
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_jeremy_jndk_jni_JNIThread_createNativeThreadWithArgs(JNIEnv *env, jobject thiz) {
+    pthread_t handles;
+    ThreadRunArgs *args = new ThreadRunArgs;
+    args->id = 2;
+    args->result = 100;
+    int result = pthread_create(&handles, nullptr, printThreadArgs, args);
+    if (result == 0) {
+        LOGD("Create thread success");
+    } else {
+        LOGD("Create thread failed");
+    }
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_jeremy_jndk_jni_JNIThread_joinNativeThread(JNIEnv *env, jobject thiz) {
+    pthread_t handles;
+    ThreadRunArgs *args = new ThreadRunArgs;
+    args->id = 2;
+    args->result = 100;
+    int result = pthread_create(&handles, nullptr, printThreadJoin, args);
+    if (result == 0) {
+        LOGD("Create thread success");
+    } else {
+        LOGD("Create thread failed");
+    }
+    void *ret = nullptr;
+    // Java_com_jeremy_jndk_jni_JNIThread_joinNativeThread方法是在主线程被调用，这里调用pthread_join后会挂起主线程，等待子线程执行结束
+    pthread_join(handles, &ret);
+    LOGD("result is %d",ret);
+}
+```
+
 ### 4.2 JNI线程的同步
+
+#### 4.2.1 wait notify
+
+```c++
+#include <base.h>
+#include <pthread.h>
+#include <stdio.h>
+#include <jvm.h>
+#include <unistd.h>
+#include <queue>
+
+// 互斥锁。同一时刻只允许一个线程对临界资源进行操作。互斥锁使用不当很可能造成线程之间的死锁。
+pthread_mutex_t mutex;
+// 条件变量。用来实现线程之间的唤醒和释放，可以控制线程之间进行等待
+pthread_cond_t cond;
+
+// 线程句柄
+pthread_t waitHandle;
+pthread_t notifyHandle;
+
+int flag = 0;
+
+// 疑问：为什么在pthread_cond_wait之前需要调用pthread_mutex_lock(&mutex)？
+// 可以避免notify thread先执行，导致的唤醒丢失的问题。
+
+void *waitThread(void *) {
+    LOGD("wait thread lock");
+    pthread_mutex_lock(&mutex);
+    while (flag == 0) {
+        LOGD("waiting");
+        // 调用该方法时，线程就会等待挂起。通过cond进行唤醒
+        pthread_cond_wait(&cond, &mutex);
+    }
+    LOGD("wait thread unlock");
+    pthread_mutex_unlock(&mutex);
+    // 如果不添加退出函数，运行的时候程序就会崩溃
+    pthread_exit(0);
+}
+
+void *notifyThread(void *) {
+    LOGD("notify thread lock");
+    pthread_mutex_lock(&mutex);
+    flag = 1;
+    pthread_mutex_unlock(&mutex);
+
+    pthread_cond_signal(&cond);
+    LOGD("notify thread unlock");
+    pthread_exit(0);
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_jeremy_jndk_jni_JNIThread_waitNativeThread(JNIEnv *env, jobject thiz) {
+    pthread_mutex_init(&mutex, nullptr);
+    pthread_cond_init(&cond, nullptr);
+
+    pthread_create(&waitHandle, nullptr, waitThread, nullptr);
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_jeremy_jndk_jni_JNIThread_notifyNativeThread(JNIEnv *env, jobject thiz) {
+    pthread_mutex_init(&mutex, nullptr);
+    pthread_cond_init(&cond, nullptr);
+
+    pthread_create(&notifyHandle, nullptr, notifyThread, nullptr);
+}
+```
+
+#### 4.2.2 生产者消费者模型
+
+```c++
+#include <base.h>
+#include <queue>
+#include <pthread.h>
+#include <unistd.h>
+
+using namespace std;
+queue<int> data;
+pthread_t consumer;
+pthread_t producer;
+
+pthread_mutex_t dataMutex;
+pthread_cond_t dataCond;
+
+void *productThread(void *) {
+    while (data.size() < 10) {
+        pthread_mutex_lock(&dataMutex);
+        LOGD("生产物品");
+        data.push(1);
+        if (data.size() > 0) {
+            LOGD("等待消费");
+            pthread_cond_signal(&dataCond);
+        }
+        pthread_mutex_unlock(&dataMutex);
+        sleep(3);
+    }
+    pthread_exit(0);
+}
+
+void *consumerThread(void *) {
+    while (1) {
+        pthread_mutex_lock(&dataMutex);
+        if (data.size() > 0) {
+            LOGI("消费物品");
+            data.pop();
+        } else {
+            LOGI("等待生产");
+            pthread_cond_wait(&dataCond, &dataMutex);
+        }
+        pthread_mutex_unlock(&dataMutex);
+        sleep(3);
+    }
+    pthread_exit(0);
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_jeremy_jndk_jni_JNIThread_startProductAndConsumerThread(JNIEnv *env, jobject thiz) {
+    pthread_mutex_init(&dataMutex, nullptr);
+    pthread_cond_init(&dataCond, nullptr);
+
+    pthread_create(&consumer, nullptr, consumerThread, nullptr);
+    pthread_create(&producer, nullptr, productThread, nullptr);
+}
+```
 
 ### 4.3 JNI中Bitmap操作
 
+#### 4.3.1 NDK中的Bitmap API使用介绍
+
+#### 4.3.2 在JNI获取Bitmap的相关信息及像素信息
+
+```c++
+//
+// Created by JeremyHwc on 2021/4/9.
+//
+#include <base.h>
+#include <android/bitmap.h>
+#include <string.h>
+
+jobject generateBitmap(JNIEnv *env, uint32_t width, uint32_t height);
+
+extern "C"
+JNIEXPORT jobject JNICALL
+Java_com_jeremy_jndk_jni_JNIBitmap_callNativeMirrorBitmap(JNIEnv *env, jobject thiz,
+                                                          jobject bitmap) {
+    AndroidBitmapInfo bitmapInfo;
+    AndroidBitmap_getInfo(env, bitmap, &bitmapInfo);
+
+    LOGD("width is %d", bitmapInfo.width);
+    LOGD("height is %d", bitmapInfo.height);
+
+    void *bitmapPixels;
+    AndroidBitmap_lockPixels(env, bitmap, &bitmapPixels);
+
+    uint32_t newWidth = bitmapInfo.width;
+    uint32_t newHeight = bitmapInfo.height;
+
+    uint32_t *newBitmapPixels = new uint32_t[newWidth * newHeight];
+    // 对bitmap进行镜像反转
+    int whereToGet = 0;
+    for (int y = 0; y < newHeight; ++y) {
+        for (int x = newWidth; x >= 0; x--) {
+            uint32_t pixel = ((uint32_t *) bitmapPixels)[whereToGet++];
+            newBitmapPixels[newWidth * y + x] = pixel;
+        }
+    }
+    AndroidBitmap_unlockPixels(env, bitmap);
+
+    // 构建反转bitmap
+    jobject newBitmap = generateBitmap(env, newWidth, newHeight);
+    void *resultBitmapPixels;
+    AndroidBitmap_lockPixels(env, newBitmap, &resultBitmapPixels);
+    memcpy((uint32_t *) resultBitmapPixels, newBitmapPixels,
+           sizeof(uint32_t) * newWidth * newHeight);
+
+    AndroidBitmap_unlockPixels(env,newBitmap);
+    delete [] newBitmapPixels;
+    return newBitmap;
+}
+
+jobject generateBitmap(JNIEnv *env, uint32_t width, uint32_t height) {
+    // 构造bitmap
+    jclass bitmapCls = env->FindClass("android/graphics/Bitmap");
+    jmethodID createBitmapFunction = env->GetStaticMethodID(bitmapCls, "createBitmap","(IILandroid/graphics/Bitmap/Config;)Landroid/graphics/Bitmap;");
+
+    jstring configName = env->NewStringUTF("ARGB_8888");
+    jclass bitmapConfigClass = env->FindClass("android/graphics/Bitmap$Config");
+    jmethodID valueOfBitmapConfigFunction = env->GetStaticMethodID(bitmapConfigClass, "valueOf",
+                                                                   "(Ljava/lang/String;)Landroid/graphics/Bitmap/Config;");
+    // 构造config
+    jobject bitmapConfig = env->CallStaticObjectMethod(bitmapConfigClass,
+                                                       valueOfBitmapConfigFunction, configName);
+    // 构造bitmap
+    jobject newBitmap = env->CallStaticObjectMethod(bitmapCls, createBitmapFunction, width, height,
+                                                    bitmapConfig);
+    return newBitmap;
+}
+```
+
+同时，在cmake中需要将jnigraphics动态库链接到native-lib这个动态库
+
+```cmake
+target_link_libraries(
+        native-lib
+#        // jnigraphics这个动态库中存在bitmap相关的操作
+#        ${jnigraphics-lib}
+        jnigraphics
+        ${log-lib}
+)
+```
+
 ## 5. 总结
+
+### 5.1 CMake编译总结
+
+### 5.2 JNI与Java之间的互相调用

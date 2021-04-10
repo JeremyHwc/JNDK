@@ -17,5 +17,9 @@ public class ThreadStartActivity extends AppCompatActivity {
         findViewById(R.id.button1).setOnClickListener((v) -> jniThread.createNativeThread());
         findViewById(R.id.button2).setOnClickListener((v) -> jniThread.createNativeThreadWithArgs());
         findViewById(R.id.button3).setOnClickListener((v) -> jniThread.joinNativeThread());
+
+        findViewById(R.id.button4).setOnClickListener((v) -> jniThread.waitNativeThread());
+        findViewById(R.id.button5).setOnClickListener((v) -> jniThread.notifyNativeThread());
+        findViewById(R.id.button6).setOnClickListener((v) -> jniThread.startProductAndConsumerThread());
     }
 }

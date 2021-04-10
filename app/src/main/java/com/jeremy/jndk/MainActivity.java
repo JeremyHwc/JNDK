@@ -2,14 +2,18 @@ package com.jeremy.jndk;
 
 import androidx.appcompat.app.AppCompatActivity;
 
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.os.Bundle;
 import android.view.View;
+import android.widget.ImageView;
 import android.widget.TextView;
 
 import com.jeremy.jndk.base.Animal;
 import com.jeremy.jndk.jni.JNIAccessField;
 import com.jeremy.jndk.jni.JNIAccessMethod;
 import com.jeremy.jndk.jni.JNIBasicType;
+import com.jeremy.jndk.jni.JNIBitmap;
 import com.jeremy.jndk.jni.JNIConstructorClass;
 import com.jeremy.jndk.jni.JNIException;
 import com.jeremy.jndk.jni.JNIReference;
@@ -43,6 +47,18 @@ public class MainActivity extends AppCompatActivity {
 //        testJniAccessMethod();
 //        testJNIConstructorClass();
 //        testJniReference();
+//        testJniException();
+        ImageView imageView = findViewById(R.id.bitmap);
+        Bitmap bitmap = BitmapFactory.decodeResource(getResources(), R.mipmap.ic_launcher);
+        JNIBitmap jniBitmap = new JNIBitmap();
+        imageView.setOnClickListener(v -> {
+            Bitmap result = jniBitmap.callNativeMirrorBitmap(bitmap);
+            imageView.setImageBitmap(result);
+        });
+
+    }
+
+    private void testJniException() {
         JNIException jniException = new JNIException();
         findViewById(R.id.sample_button).setOnClickListener(new View.OnClickListener() {
             @Override
